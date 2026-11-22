@@ -1,0 +1,83 @@
+-- [Q:GRAY] [AC:HYPERION-LOW] [GAME-AC:LOW]
+-- [EXEC:DELTA/SOLARA/GENERIC] [PLATFORM:ANDROID/IOS/PC] [ZONA:2] [API-VER:2026-11]
+-- [ADAPTIVE:yes] [FALLBACK:game:HttpGet→request/http_request]
+
+local URL = "https://raw.githubusercontent.com/Serl1cia/EvolutionHub/refs/heads/main/fullazl.lua"
+
+local cleanup = {}
+local function safe(fn, ...)
+    local ok, err = pcall(fn, ...)
+    if not ok then warn("[zpost-Q] " .. tostring(err)) end
+    return ok, err
+end
+local function cleanupAll()
+    for _, f in ipairs(cleanup) do safe(f) end
+    cleanup = {}
+end
+
+local genv = (getgenv and getgenv()) or _G
+local req = (syn and syn.request) or http_request or request
+local UIS = game:GetService("UserInputService")
+local RS = game:GetService("ReplicatedStorage")
+
+local IS_MOBILE = UIS.TouchEnabled and not UIS.KeyboardEnabled
+genv.ZPOST_MOBILE = IS_MOBILE
+
+local EXEC = "unknown"
+safe(function() EXEC = tostring(identifyexecutor and identifyexecutor() or "unknown") end)
+local execLow = EXEC:lower()
+if execLow:find("xeno", 1, true) or execLow:find("solara", 1, true) then
+    warn("[zpost] " .. EXEC .. " detected: limited module support, some features may not work")
+end
+
+if type(loadstring) ~= "function" then
+    return warn("[zpost] executor has no loadstring")
+end
+
+-- wait for the game first (mobile loads slower)
+if not game:IsLoaded() then game.Loaded:Wait() end
+
+local pk = RS:FindFirstChild("packets") or RS:WaitForChild("packets", IS_MOBILE and 20 or 8)
+if not pk then
+    return warn("[zpost] 'packets' not found: wrong game or still loading")
+end
+
+-- mirror the hub's own gate so it can't kick you after we pass
+local gateOk = pcall(function()
+    local res = require(pk)
+    assert(type(res) == "table" and (rawget(res, "bytenet_use") or res.bytenet_use))
+end)
+if not gateOk then
+    return warn("[zpost] require() failed or returned no bytenet_use, use a higher-UNC executor")
+end
+
+if genv.AzlScriptLoaded or _G.AzlScriptLoaded then
+    return warn("[zpost] already executed, rejoin to reload")
+end
+
+local function fetch(url)
+    local ok, body = pcall(function() return game:HttpGet(url, true) end)
+    if ok and type(body) == "string" and #body > 0 then return body end
+    if req then
+        local ok2, res = pcall(req, { Url = url, Method = "GET" })
+        if ok2 and res and type(res.Body) == "string" and #res.Body > 0 then
+            return res.Body
+        end
+    end
+end
+
+local src
+local tries = IS_MOBILE and 4 or 3
+for i = 1, tries do
+    src = fetch(URL)
+    if src then break end
+    warn(("[zpost] fetch failed %d/%d"):format(i, tries))
+    task.wait(1 + math.random() * 0.5)
+end
+if not src then return warn("[zpost] download failed, check connection/executor HTTP") end
+
+local fn, err = loadstring(src)
+if not fn then return warn("[zpost] compile error: " .. tostring(err)) end
+
+cleanup[#cleanup + 1] = function() genv.AzlScriptLoaded = nil; _G.AzlScriptLoaded = nil end
+if not safe(fn) then cleanupAll() end

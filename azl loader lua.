@@ -1,14 +1,11 @@
 -- [Q:GRAY] [AC:HYPERION-LOW] [GAME-AC:LOW]
 -- [EXEC:DELTA/GENERIC] [PLATFORM:ANDROID/IOS/PC] [ZONA:2] [API-VER:2026-11]
--- [ADAPTIVE:yes] [FALLBACK:gethui→CoreGui→PlayerGui | HttpGet→request]
+-- [ADAPTIVE:yes] [FALLBACK:gethui→CoreGui→PlayerGui]
 loadstring([==[
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local CoreGui = game:GetService("CoreGui")
-local RS = game:GetService("ReplicatedStorage")
-
-local HUB_URL = "https://raw.githubusercontent.com/Serl1cia/EvolutionHub/refs/heads/main/fullazl.lua"
 
 local genv = (getgenv and getgenv()) or _G
 if genv.ZPOST_GUI and genv.ZPOST_GUI.Unload then pcall(genv.ZPOST_GUI.Unload) end
@@ -30,7 +27,6 @@ end
 
 local IS_MOBILE = UIS.TouchEnabled and not UIS.KeyboardEnabled
 genv.ZPOST_MOBILE = IS_MOBILE
-local req = (syn and syn.request) or http_request or request
 local EXEC = "unknown"
 safe(function() EXEC = tostring(identifyexecutor and identifyexecutor() or "unknown") end)
 
@@ -69,7 +65,7 @@ for _, getP in ipairs({
         if gui.Parent == p then parented = true break end
     end
 end
-if not parented then return warn("[zpost] gagal membuat GUI, tidak ada parent yang bisa dipakai") end
+if not parented then return warn("[zpost] failed to create GUI, no valid parent found") end
 cleanup[#cleanup + 1] = function() gui:Destroy() end
 
 -- drag + tap
@@ -116,7 +112,7 @@ new("UIStroke", { Color = Color3.fromRGB(60, 60, 78), Thickness = 1 }, main)
 local titleBar = new("Frame", { Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = C.title, BorderSizePixel = 0 }, main)
 new("TextLabel", {
     Size = UDim2.new(1, -50, 1, 0), Position = UDim2.fromOffset(12, 0), BackgroundTransparency = 1,
-    Text = "zpost  |  Azure Latch", TextXAlignment = Enum.TextXAlignment.Left,
+    Text = "K Hub  |  Azure Latch", TextXAlignment = Enum.TextXAlignment.Left,
     Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = C.text,
 }, titleBar)
 local closeBtn = new("TextButton", {
@@ -233,17 +229,240 @@ function UI.Unload()
     genv.ZPOST_GUI = nil
 end
 
--- tab
+-- tabs
 local tMain = UI:AddTab("Main")
-local statusLabel = tMain:AddLabel("Status hub: menunggu...")
-statusLabel.Size = UDim2.new(1, 0, 0, 36)
 local tVisual = UI:AddTab("Visual")
-tVisual:AddLabel("Belum ada fitur.")
+tVisual:AddLabel("No features yet.")
 local tSet = UI:AddTab("Settings")
 tSet:AddLabel("Executor: " .. EXEC .. "  |  " .. (IS_MOBILE and "Mobile" or "PC"))
 tSet:AddButton("Unload GUI", function() UI.Unload() end)
 
--- tombol K (bisa digeser, tap = buka/tutup)
+-- ===== AUTO COUNTER =====
+-- [Q:GRAY] [AC:HYPERION-LOW] [GAME-AC:LOW] [ZONA:2]
+do
+    local RS = game:GetService("ReplicatedStorage")
+    local WS = game:GetService("Workspace")
+    local RunService = game:GetService("RunService")
+    local LP = Players.LocalPlayer
+
+    local CFG = {
+        Range = 60, CloseRange = 11, MaxAngle = 15, Window = 1.5,
+        Cooldown = 0.3, JitterMin = 0.01, JitterMax = 0.05,
+        PreferDribble = false, UseDash = false,
+    }
+
+    local NORMAL = { ["71212694698006"] = true, ["124780743838383"] = true }
+    local SPECIAL = {
+        ["137771919165585"] = true, ["136095107474705"] = true, ["135794884575834"] = true,
+        ["117676277921436"] = true, ["77834862567057"] = true, ["89339537870505"] = true,
+        ["86374214619488"] = true, ["83955271022581"] = true, ["80313615927187"] = true,
+    }
+    local TACKLE = "109744655458082"
+    local STYLE_SKILL = {
+        nagi = "Tspecialer", bachira = "skill2", yukimiya = "skill4", kaiser = "skill4",
+        masterykaiser = "skill4", sae = "skill2", barou = "skill1", rin = "skill2",
+        nelisagi = "skill4", reo = "skill2", karasu = "skill1", masterylorenzo = "skill2",
+        kurona = "skill3", kiyora = "skill2", hiori = "Tspecialer",
+    }
+
+    local enabled, lastCheck, lastCounter = false, 0, 0
+    local targets, conns, hooked = {}, {}, {}
+    local packets
+
+    local function getPackets()
+        if packets then return packets end
+        pcall(function()
+            local m = RS:FindFirstChild("packets") or RS:FindFirstChild("packets", true)
+            if m then
+                local r = require(m)
+                if type(r) == "table" and r.bytenet_use then packets = r end
+            end
+        end)
+        return packets
+    end
+    local function fireUse(...)
+        local p = getPackets()
+        if p and p.bytenet_use and p.bytenet_use.send then
+            return pcall(p.bytenet_use.send, { ... })
+        end
+        return false
+    end
+
+    local function teamOf(name)
+        local p = Players:FindFirstChild(name)
+        local t = p and p.Team and p.Team.Name
+        if t and t ~= "" and t ~= "lobby" and t ~= "Spectators" then return t end
+        local chars = WS:FindFirstChild("characters")
+        local c = chars and chars:FindFirstChild(name)
+        local st = c and c:FindFirstChild("state")
+        local v = st and st:FindFirstChild("team")
+        if v and v.Value ~= "" and v.Value ~= "lobby" and v.Value ~= "Spectators" then
+            return tostring(v.Value)
+        end
+        return nil
+    end
+    local function hasIFrame(name)
+        local chars = WS:FindFirstChild("characters")
+        local c = chars and chars:FindFirstChild(name)
+        local st = c and c:FindFirstChild("state")
+        local f = st and st:FindFirstChild("iframe")
+        return f ~= nil and f.Value == true
+    end
+    local function hasBall()
+        local ws = RS:FindFirstChild("workspace")
+        local holder = ws and ws:FindFirstChild("ballHolder")
+        if holder and holder.Value and holder.Value == LP.Character then return true end
+        local chars = WS:FindFirstChild("characters")
+        local c = chars and chars:FindFirstChild(LP.Name)
+        return c ~= nil and (c:FindFirstChild("Ball") ~= nil or c:FindFirstChild("AlternateBallRig") ~= nil)
+    end
+    local function dribbleOnCd()
+        local pg = LP:FindFirstChild("PlayerGui")
+        local hb = pg and pg:FindFirstChild("Hotbar")
+        if not hb then return false end
+        for _, v in ipairs(hb:GetDescendants()) do
+            if v:IsA("TextLabel") and v.Text and v.Text:find("dribble", 1, true) then return true end
+        end
+        return false
+    end
+    local function skillOnCd(name)
+        local pg = LP:FindFirstChild("PlayerGui")
+        local hb = pg and pg:FindFirstChild("Hotbar")
+        local btn = hb and hb:FindFirstChild(name, true)
+        if not btn then return true end
+        local cd = btn:FindFirstChild("Cooldown")
+        if not cd then return false end
+        return cd.AbsoluteSize.Y > 1 or (cd.Visible and cd.BackgroundTransparency < 0.9)
+    end
+
+    local function perform()
+        if hasIFrame(LP.Name) then return end
+        local skill = STYLE_SKILL[LP:GetAttribute("style")]
+        local function trySkill()
+            if skill and not skillOnCd(skill) then fireUse(skill) return true end
+        end
+        local function tryDribble()
+            if not dribbleOnCd() then fireUse("dribble", false) return true end
+        end
+        local first, second = trySkill, tryDribble
+        if CFG.PreferDribble then first, second = tryDribble, trySkill end
+        if first() or second() then return end
+        if CFG.UseDash then fireUse("run") end
+    end
+
+    local function mark(char, special)
+        if char.Name == LP.Name then return end
+        targets[char] = { t = os.clock(), special = special }
+    end
+
+    local function check()
+        if not enabled or not next(targets) then return end
+        local now = os.clock()
+        if now - lastCounter < CFG.Cooldown then return end
+        if not hasBall() or hasIFrame(LP.Name) then return end
+        local myChar = LP.Character
+        local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        local mine = teamOf(LP.Name)
+        if not myHRP or not mine then return end
+        for char, d in pairs(targets) do
+            local hrp = char.Parent and char:FindFirstChild("HumanoidRootPart")
+            if not hrp or now - d.t > CFG.Window then
+                targets[char] = nil
+            else
+                local theirs = teamOf(char.Name)
+                if theirs and theirs ~= mine then
+                    local toMe = myHRP.Position - hrp.Position
+                    local flat = Vector3.new(toMe.X, 0, toMe.Z)
+                    local dist = flat.Magnitude
+                    local angleOk = dist <= CFG.CloseRange
+                    if not angleOk and dist > 0.001 then
+                        local lv = hrp.CFrame.LookVector
+                        local look = Vector3.new(lv.X, 0, lv.Z)
+                        if look.Magnitude > 0.001 then
+                            local dot = look.Unit:Dot(flat.Unit)
+                            angleOk = math.deg(math.acos(math.clamp(dot, -1, 1))) <= CFG.MaxAngle
+                        end
+                    end
+                    if dist <= CFG.Range and angleOk and (d.special or hasIFrame(char.Name)) then
+                        targets[char] = nil
+                        lastCounter = now
+                        task.delay(CFG.JitterMin + math.random() * (CFG.JitterMax - CFG.JitterMin), perform)
+                        return
+                    end
+                end
+            end
+        end
+    end
+
+    local function hookChar(char)
+        if not char or char.Name == LP.Name or hooked[char] then return end
+        hooked[char] = true
+        local function hookSound(s)
+            if not s:IsA("Sound") or hooked[s] then return end
+            hooked[s] = true
+            local function trig()
+                if not enabled then return end
+                local id = tostring(s.SoundId):match("%d+")
+                if id and SPECIAL[id] then mark(char, true)
+                elseif id and NORMAL[id] then mark(char, false) end
+            end
+            conns[#conns + 1] = s.Played:Connect(trig)
+            conns[#conns + 1] = s:GetPropertyChangedSignal("IsPlaying"):Connect(function()
+                if s.IsPlaying then trig() end
+            end)
+            if s.IsPlaying then trig() end
+        end
+        for _, d in ipairs(char:GetDescendants()) do hookSound(d) end
+        conns[#conns + 1] = char.DescendantAdded:Connect(function(d)
+            if enabled then hookSound(d) end
+        end)
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        local animator = hum and (hum:FindFirstChildOfClass("Animator") or hum:WaitForChild("Animator", 1))
+        if animator then
+            conns[#conns + 1] = animator.AnimationPlayed:Connect(function(track)
+                local a = track.Animation
+                local id = a and tostring(a.AnimationId):match("%d+")
+                if enabled and id == TACKLE then mark(char, true) end
+            end)
+        end
+    end
+
+    local function stop()
+        enabled = false
+        for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+        conns, hooked, targets = {}, {}, {}
+    end
+    local function start()
+        if enabled then return end
+        enabled = true
+        if not getPackets() then
+            warn("[zpost] require(packets) failed, auto counter can't fire")
+        end
+        conns[#conns + 1] = RunService.Heartbeat:Connect(function()
+            local now = os.clock()
+            if now - lastCheck < 0.05 then return end
+            lastCheck = now
+            safe(check)
+        end)
+        task.spawn(function()
+            local chars = WS:FindFirstChild("characters") or WS:WaitForChild("characters", 10)
+            if not enabled then return end
+            if not chars then return warn("[zpost] 'characters' folder not found, wrong game?") end
+            for _, c in ipairs(chars:GetChildren()) do task.spawn(safe, hookChar, c) end
+            conns[#conns + 1] = chars.ChildAdded:Connect(function(c)
+                if enabled then task.spawn(safe, hookChar, c) end
+            end)
+        end)
+    end
+    cleanup[#cleanup + 1] = stop
+
+    tMain:AddToggle("Auto Counter", false, function(on) if on then start() else stop() end end)
+    tMain:AddToggle("Prefer Dribble", false, function(on) CFG.PreferDribble = on end)
+    tMain:AddToggle("Use Dash (fallback)", false, function(on) CFG.UseDash = on end)
+    tMain:AddLabel("Needs an executor that supports require().")
+end
+
+-- ===== K button (draggable, tap = open/close) =====
 local fab = new("TextButton", {
     Size = UDim2.fromOffset(48, 48), Position = UDim2.new(0, 12, 0.5, -24),
     BackgroundColor3 = Color3.new(1, 1, 1), Text = "", AutoButtonColor = false,
@@ -258,99 +477,4 @@ local fabStroke = new("UIStroke", {
 }, fab)
 new("TextLabel", {
     Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "K",
-    Font = Enum.Font.GothamBlack, TextSize = 26, TextColor3 = Color3.new(1, 1, 1),
-}, fab)
-local pulse = TweenService:Create(fabStroke,
-    TweenInfo.new(1.4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-    { Transparency = 0.75 })
-pulse:Play()
-cleanup[#cleanup + 1] = function() pulse:Cancel() end
-local scale = new("UIScale", { Scale = 1 }, fab)
-local function pressFx()
-    scale.Scale = 0.86
-    TweenService:Create(scale, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-        { Scale = 1 }):Play()
-end
-makeDraggable(fab, fab, function()
-    pressFx()
-    main.Visible = not main.Visible
-end)
-
-track(UIS.InputBegan:Connect(function(input, gp)
-    if not gp and input.KeyCode == Enum.KeyCode.RightShift then main.Visible = not main.Visible end
-end))
-
-genv.ZPOST_GUI = UI
-
--- ===== loader hub Azure Latch =====
-local hubLoaded, loading = false, false
-local function setStatus(t) pcall(function() statusLabel.Text = "Status hub: " .. t end) end
-
-local function fetch(url)
-    local ok, body = pcall(function() return game:HttpGet(url, true) end)
-    if ok and type(body) == "string" and #body > 0 then return body end
-    if req then
-        local ok2, res = pcall(req, { Url = url, Method = "GET" })
-        if ok2 and res and type(res.Body) == "string" and #res.Body > 0 then return res.Body end
-    end
-end
-
-local function loadHub()
-    if hubLoaded or loading then return end
-    loading = true
-    local function fail(msg)
-        loading = false
-        setStatus("gagal, " .. msg)
-        warn("[zpost] " .. msg)
-    end
-
-    if type(loadstring) ~= "function" then return fail("executor tidak punya loadstring") end
-
-    setStatus("menunggu game...")
-    if not game:IsLoaded() then game.Loaded:Wait() end
-
-    local pk = RS:FindFirstChild("packets") or RS:WaitForChild("packets", IS_MOBILE and 20 or 8)
-    if not pk then return fail("'packets' tidak ketemu (bukan game yang benar / belum selesai loading)") end
-
-    local gateOk = pcall(function()
-        local res = require(pk)
-        assert(type(res) == "table" and (rawget(res, "bytenet_use") or res.bytenet_use))
-    end)
-    if not gateOk then return fail("require() gagal / tidak ada bytenet_use, pakai executor UNC lebih tinggi") end
-
-    if genv.AzlScriptLoaded or _G.AzlScriptLoaded then
-        hubLoaded, loading = true, false
-        return setStatus("sudah aktif (rejoin kalau mau muat ulang)")
-    end
-
-    setStatus("mengunduh script...")
-    local src
-    local tries = IS_MOBILE and 4 or 3
-    for i = 1, tries do
-        src = fetch(HUB_URL)
-        if src then break end
-        warn(("[zpost] fetch gagal %d/%d"):format(i, tries))
-        task.wait(1 + math.random() * 0.5)
-    end
-    if not src then return fail("download gagal, cek koneksi / HTTP executor") end
-
-    local fn, err = loadstring(src)
-    if not fn then return fail("compile error: " .. tostring(err)) end
-
-    setStatus("menjalankan hub...")
-    local ok = safe(fn)
-    if not ok then
-        genv.AzlScriptLoaded = nil
-        _G.AzlScriptLoaded = nil
-        return fail("hub error, lihat console")
-    end
-    hubLoaded, loading = true, false
-    setStatus("aktif")
-end
-
-tMain:AddButton("Muat Hub / Coba Lagi", function() task.spawn(loadHub) end)
-tMain:AddLabel("Hub punya GUI sendiri. Tombol K hanya untuk GUI ini.")
-task.spawn(loadHub)
-
-warn("[zpost] GUI siap")
-]==])()
+    Font = Enum.Font.GothamBlack, T

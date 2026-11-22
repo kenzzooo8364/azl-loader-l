@@ -6,6 +6,10 @@ local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local CoreGui = game:GetService("CoreGui")
+local RS = game:GetService("ReplicatedStorage")
+local WS = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local LP = Players.LocalPlayer
 
 local genv = (getgenv and getgenv()) or _G
 if genv.ZPOST_GUI and genv.ZPOST_GUI.Unload then pcall(genv.ZPOST_GUI.Unload) end
@@ -57,7 +61,7 @@ local parented = false
 for _, getP in ipairs({
     function() return gethui and gethui() end,
     function() return CoreGui end,
-    function() return Players.LocalPlayer:WaitForChild("PlayerGui", 10) end,
+    function() return LP:WaitForChild("PlayerGui", 10) end,
 }) do
     local ok, p = pcall(getP)
     if ok and p then
@@ -218,6 +222,44 @@ function UI:AddTab(name)
         return obj
     end
 
+    -- +/- stepper (easier than a slider on touch)
+    function tab:AddStepper(text, min, max, step, default, callback)
+        local value = default
+        local row = new("Frame", { Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = C.row }, page)
+        corner(row, 6)
+        new("TextLabel", {
+            Size = UDim2.new(1, -130, 1, 0), Position = UDim2.fromOffset(10, 0), BackgroundTransparency = 1,
+            Text = text, TextXAlignment = Enum.TextXAlignment.Left, Font = Enum.Font.GothamMedium,
+            TextSize = 13, TextColor3 = C.text,
+        }, row)
+        local function mk(label, x)
+            local b = new("TextButton", {
+                Size = UDim2.fromOffset(28, 24), Position = UDim2.new(1, x, 0.5, -12),
+                BackgroundColor3 = C.tab, Text = label, AutoButtonColor = false,
+                Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = C.text,
+            }, row)
+            corner(b, 6)
+            return b
+        end
+        local minus, plus = mk("-", -118), mk("+", -34)
+        local lbl = new("TextLabel", {
+            Size = UDim2.fromOffset(52, 24), Position = UDim2.new(1, -88, 0.5, -12), BackgroundTransparency = 1,
+            Text = tostring(value), Font = Enum.Font.GothamMedium, TextSize = 12, TextColor3 = C.sub,
+        }, row)
+        local obj = {}
+        function obj:Set(v, silent)
+            v = math.clamp(v, min, max)
+            v = tonumber(string.format("%.3f", math.floor(v / step + 0.5) * step))
+            value = v
+            lbl.Text = tostring(v)
+            if not silent and callback then safe(callback, v) end
+        end
+        function obj:Get() return value end
+        track(minus.Activated:Connect(function() obj:Set(value - step) end))
+        track(plus.Activated:Connect(function() obj:Set(value + step) end))
+        return obj
+    end
+
     track(btn.Activated:Connect(function() setActive(tab) end))
     UI.Tabs[name] = tab
     if not activeTab then setActive(tab) end
@@ -237,18 +279,42 @@ local tSet = UI:AddTab("Settings")
 tSet:AddLabel("Executor: " .. EXEC .. "  |  " .. (IS_MOBILE and "Mobile" or "PC"))
 tSet:AddButton("Unload GUI", function() UI.Unload() end)
 
+local function header(text)
+    local l = tMain:AddLabel(text)
+    l.Font = Enum.Font.GothamBold
+    l.TextColor3 = C.accent
+    return l
+end
+
+-- ===== shared game helpers =====
+local packets
+local function getPackets()
+    if packets then return packets end
+    pcall(function()
+        local m = RS:FindFirstChild("packets") or RS:FindFirstChild("packets", true)
+        if m then
+            local r = require(m)
+            if type(r) == "table" and r.bytenet_use then packets = r end
+        end
+    end)
+    return packets
+end
+local function fireUse(...)
+    local p = getPackets()
+    if p and p.bytenet_use and p.bytenet_use.send then
+        return pcall(p.bytenet_use.send, { ... })
+    end
+    return false
+end
+
 -- ===== AUTO COUNTER =====
 -- [Q:GRAY] [AC:HYPERION-LOW] [GAME-AC:LOW] [ZONA:2]
 do
-    local RS = game:GetService("ReplicatedStorage")
-    local WS = game:GetService("Workspace")
-    local RunService = game:GetService("RunService")
-    local LP = Players.LocalPlayer
-
+    header("AUTO COUNTER")
     local CFG = {
         Range = 60, CloseRange = 11, MaxAngle = 15, Window = 1.5,
         Cooldown = 0.3, JitterMin = 0.01, JitterMax = 0.05,
-        PreferDribble = false, UseDash = false,
+        UseDash = false,
     }
 
     local NORMAL = { ["71212694698006"] = true, ["124780743838383"] = true }
@@ -267,26 +333,6 @@ do
 
     local enabled, lastCheck, lastCounter = false, 0, 0
     local targets, conns, hooked = {}, {}, {}
-    local packets
-
-    local function getPackets()
-        if packets then return packets end
-        pcall(function()
-            local m = RS:FindFirstChild("packets") or RS:FindFirstChild("packets", true)
-            if m then
-                local r = require(m)
-                if type(r) == "table" and r.bytenet_use then packets = r end
-            end
-        end)
-        return packets
-    end
-    local function fireUse(...)
-        local p = getPackets()
-        if p and p.bytenet_use and p.bytenet_use.send then
-            return pcall(p.bytenet_use.send, { ... })
-        end
-        return false
-    end
 
     local function teamOf(name)
         local p = Players:FindFirstChild(name)
@@ -344,9 +390,7 @@ do
         local function tryDribble()
             if not dribbleOnCd() then fireUse("dribble", false) return true end
         end
-        local first, second = trySkill, tryDribble
-        if CFG.PreferDribble then first, second = tryDribble, trySkill end
-        if first() or second() then return end
+        if trySkill() or tryDribble() then return end
         if CFG.UseDash then fireUse("run") end
     end
 
@@ -436,45 +480,4 @@ do
         if enabled then return end
         enabled = true
         if not getPackets() then
-            warn("[zpost] require(packets) failed, auto counter can't fire")
-        end
-        conns[#conns + 1] = RunService.Heartbeat:Connect(function()
-            local now = os.clock()
-            if now - lastCheck < 0.05 then return end
-            lastCheck = now
-            safe(check)
-        end)
-        task.spawn(function()
-            local chars = WS:FindFirstChild("characters") or WS:WaitForChild("characters", 10)
-            if not enabled then return end
-            if not chars then return warn("[zpost] 'characters' folder not found, wrong game?") end
-            for _, c in ipairs(chars:GetChildren()) do task.spawn(safe, hookChar, c) end
-            conns[#conns + 1] = chars.ChildAdded:Connect(function(c)
-                if enabled then task.spawn(safe, hookChar, c) end
-            end)
-        end)
-    end
-    cleanup[#cleanup + 1] = stop
-
-    tMain:AddToggle("Auto Counter", false, function(on) if on then start() else stop() end end)
-    tMain:AddToggle("Prefer Dribble", false, function(on) CFG.PreferDribble = on end)
-    tMain:AddToggle("Use Dash (fallback)", false, function(on) CFG.UseDash = on end)
-    tMain:AddLabel("Needs an executor that supports require().")
-end
-
--- ===== K button (draggable, tap = open/close) =====
-local fab = new("TextButton", {
-    Size = UDim2.fromOffset(48, 48), Position = UDim2.new(0, 12, 0.5, -24),
-    BackgroundColor3 = Color3.new(1, 1, 1), Text = "", AutoButtonColor = false,
-}, gui)
-corner(fab, 14)
-new("UIGradient", {
-    Color = ColorSequence.new(Color3.fromRGB(130, 90, 255), Color3.fromRGB(70, 150, 255)),
-    Rotation = 45,
-}, fab)
-local fabStroke = new("UIStroke", {
-    Color = Color3.fromRGB(190, 175, 255), Thickness = 2, Transparency = 0.1,
-}, fab)
-new("TextLabel", {
-    Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "K",
-    Font = Enum.Font.GothamBlack, T
+            warn("[zpost] require(packets) failed, auto counter can'

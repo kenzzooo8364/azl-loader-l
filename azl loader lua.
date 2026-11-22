@@ -1,8 +1,17 @@
 -- [Q:GRAY] [AC:HYPERION-LOW] [GAME-AC:LOW]
--- [EXEC:DELTA/SOLARA/GENERIC] [PLATFORM:ANDROID/IOS/PC] [ZONA:2] [API-VER:2026-11]
--- [ADAPTIVE:yes] [FALLBACK:game:HttpGet→request/http_request]
+-- [EXEC:DELTA/GENERIC] [PLATFORM:ANDROID/IOS/PC] [ZONA:2] [API-VER:2026-11]
+-- [ADAPTIVE:yes] [FALLBACK:gethui→CoreGui→PlayerGui | HttpGet→request]
+loadstring([==[
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local CoreGui = game:GetService("CoreGui")
+local RS = game:GetService("ReplicatedStorage")
 
-local URL = "https://raw.githubusercontent.com/Serl1cia/EvolutionHub/refs/heads/main/fullazl.lua"
+local HUB_URL = "https://raw.githubusercontent.com/Serl1cia/EvolutionHub/refs/heads/main/fullazl.lua"
+
+local genv = (getgenv and getgenv()) or _G
+if genv.ZPOST_GUI and genv.ZPOST_GUI.Unload then pcall(genv.ZPOST_GUI.Unload) end
 
 local cleanup = {}
 local function safe(fn, ...)
@@ -14,70 +23,334 @@ local function cleanupAll()
     for _, f in ipairs(cleanup) do safe(f) end
     cleanup = {}
 end
-
-local genv = (getgenv and getgenv()) or _G
-local req = (syn and syn.request) or http_request or request
-local UIS = game:GetService("UserInputService")
-local RS = game:GetService("ReplicatedStorage")
+local function track(conn)
+    cleanup[#cleanup + 1] = function() conn:Disconnect() end
+    return conn
+end
 
 local IS_MOBILE = UIS.TouchEnabled and not UIS.KeyboardEnabled
 genv.ZPOST_MOBILE = IS_MOBILE
-
+local req = (syn and syn.request) or http_request or request
 local EXEC = "unknown"
 safe(function() EXEC = tostring(identifyexecutor and identifyexecutor() or "unknown") end)
-local execLow = EXEC:lower()
-if execLow:find("xeno", 1, true) or execLow:find("solara", 1, true) then
-    warn("[zpost] " .. EXEC .. " detected: limited module support, some features may not work")
+
+local C = {
+    bg = Color3.fromRGB(24, 24, 30), title = Color3.fromRGB(32, 32, 40),
+    row = Color3.fromRGB(36, 36, 46), tab = Color3.fromRGB(30, 30, 38),
+    accent = Color3.fromRGB(110, 120, 255), off = Color3.fromRGB(70, 70, 84),
+    text = Color3.fromRGB(235, 235, 245), sub = Color3.fromRGB(150, 150, 170),
+}
+
+local function new(class, props, parent)
+    local o = Instance.new(class)
+    for k, v in pairs(props) do o[k] = v end
+    o.Parent = parent
+    return o
+end
+local function corner(o, r) new("UICorner", { CornerRadius = UDim.new(0, r) }, o) end
+
+-- ScreenGui (fallback chain)
+local gui = Instance.new("ScreenGui")
+gui.Name = "ZpostUI"
+gui.ResetOnSpawn = false
+gui.DisplayOrder = 999
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+if protectgui then pcall(protectgui, gui) elseif syn and syn.protect_gui then pcall(syn.protect_gui, gui) end
+
+local parented = false
+for _, getP in ipairs({
+    function() return gethui and gethui() end,
+    function() return CoreGui end,
+    function() return Players.LocalPlayer:WaitForChild("PlayerGui", 10) end,
+}) do
+    local ok, p = pcall(getP)
+    if ok and p then
+        pcall(function() gui.Parent = p end)
+        if gui.Parent == p then parented = true break end
+    end
+end
+if not parented then return warn("[zpost] gagal membuat GUI, tidak ada parent yang bisa dipakai") end
+cleanup[#cleanup + 1] = function() gui:Destroy() end
+
+-- drag + tap
+local function makeDraggable(handle, target, onTap)
+    local dragging, moved, startInput, startPos = false, false, nil, nil
+    track(handle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging, moved = true, false
+            startInput, startPos = input.Position, target.Position
+            local c
+            c = input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                    c:Disconnect()
+                    if not moved and onTap then safe(onTap) end
+                end
+            end)
+        end
+    end))
+    track(UIS.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch) then
+            local d = input.Position - startInput
+            if d.Magnitude > 8 then moved = true end
+            if moved then
+                target.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
+                    startPos.Y.Scale, startPos.Y.Offset + d.Y)
+            end
+        end
+    end))
 end
 
-if type(loadstring) ~= "function" then
-    return warn("[zpost] executor has no loadstring")
+-- window
+local W, H = IS_MOBILE and 400 or 460, IS_MOBILE and 250 or 300
+local main = new("Frame", {
+    Size = UDim2.fromOffset(W, H), AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.fromScale(0.5, 0.5), BackgroundColor3 = C.bg,
+    BorderSizePixel = 0, ClipsDescendants = true,
+}, gui)
+corner(main, 10)
+new("UIStroke", { Color = Color3.fromRGB(60, 60, 78), Thickness = 1 }, main)
+
+local titleBar = new("Frame", { Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = C.title, BorderSizePixel = 0 }, main)
+new("TextLabel", {
+    Size = UDim2.new(1, -50, 1, 0), Position = UDim2.fromOffset(12, 0), BackgroundTransparency = 1,
+    Text = "zpost  |  Azure Latch", TextXAlignment = Enum.TextXAlignment.Left,
+    Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = C.text,
+}, titleBar)
+local closeBtn = new("TextButton", {
+    Size = UDim2.fromOffset(32, 32), Position = UDim2.new(1, -32, 0, 0), BackgroundTransparency = 1,
+    Text = "—", Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = C.sub, AutoButtonColor = false,
+}, titleBar)
+track(closeBtn.Activated:Connect(function() main.Visible = false end))
+makeDraggable(titleBar, main)
+
+local tabList = new("ScrollingFrame", {
+    Size = UDim2.fromOffset(96, H - 40), Position = UDim2.fromOffset(6, 36),
+    BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 0,
+    AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
+}, main)
+new("UIListLayout", { Padding = UDim.new(0, 5) }, tabList)
+
+local content = new("Frame", {
+    Size = UDim2.fromOffset(W - 112, H - 42), Position = UDim2.fromOffset(106, 38), BackgroundTransparency = 1,
+}, main)
+
+-- UI object
+local UI = { Tabs = {} }
+local activeTab
+local function setActive(tab)
+    if activeTab then
+        activeTab.page.Visible = false
+        TweenService:Create(activeTab.btn, TweenInfo.new(0.15), { BackgroundColor3 = C.tab, TextColor3 = C.sub }):Play()
+    end
+    activeTab = tab
+    tab.page.Visible = true
+    TweenService:Create(tab.btn, TweenInfo.new(0.15), { BackgroundColor3 = C.accent, TextColor3 = Color3.new(1, 1, 1) }):Play()
 end
 
--- wait for the game first (mobile loads slower)
-if not game:IsLoaded() then game.Loaded:Wait() end
+function UI:AddTab(name)
+    local btn = new("TextButton", {
+        Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = C.tab, Text = name, AutoButtonColor = false,
+        Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = C.sub,
+    }, tabList)
+    corner(btn, 6)
+    local page = new("ScrollingFrame", {
+        Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, BorderSizePixel = 0,
+        ScrollBarThickness = 3, AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        CanvasSize = UDim2.new(), Visible = false,
+    }, content)
+    new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, page)
+    new("UIPadding", { PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6) }, page)
 
-local pk = RS:FindFirstChild("packets") or RS:WaitForChild("packets", IS_MOBILE and 20 or 8)
-if not pk then
-    return warn("[zpost] 'packets' not found: wrong game or still loading")
+    local tab = { btn = btn, page = page }
+
+    function tab:AddLabel(text)
+        return new("TextLabel", {
+            Size = UDim2.new(1, 0, 0, 22), BackgroundTransparency = 1, Text = text,
+            TextXAlignment = Enum.TextXAlignment.Left, Font = Enum.Font.Gotham,
+            TextSize = 12, TextColor3 = C.sub, TextWrapped = true,
+        }, page)
+    end
+
+    function tab:AddButton(text, callback)
+        local b = new("TextButton", {
+            Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = C.row, Text = text, AutoButtonColor = false,
+            Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = C.text,
+        }, page)
+        corner(b, 6)
+        track(b.Activated:Connect(function() if callback then safe(callback) end end))
+        return b
+    end
+
+    function tab:AddToggle(text, default, callback)
+        local state = default and true or false
+        local row = new("TextButton", {
+            Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = C.row, Text = "", AutoButtonColor = false,
+        }, page)
+        corner(row, 6)
+        new("TextLabel", {
+            Size = UDim2.new(1, -64, 1, 0), Position = UDim2.fromOffset(10, 0), BackgroundTransparency = 1,
+            Text = text, TextXAlignment = Enum.TextXAlignment.Left, Font = Enum.Font.GothamMedium,
+            TextSize = 13, TextColor3 = C.text,
+        }, row)
+        local sw = new("Frame", {
+            Size = UDim2.fromOffset(38, 20), Position = UDim2.new(1, -48, 0.5, -10),
+            BackgroundColor3 = state and C.accent or C.off,
+        }, row)
+        corner(sw, 10)
+        local knob = new("Frame", {
+            Size = UDim2.fromOffset(16, 16), BackgroundColor3 = Color3.new(1, 1, 1),
+            Position = state and UDim2.fromOffset(20, 2) or UDim2.fromOffset(2, 2),
+        }, sw)
+        corner(knob, 8)
+
+        local obj = {}
+        local function render()
+            local ti = TweenInfo.new(0.15)
+            TweenService:Create(sw, ti, { BackgroundColor3 = state and C.accent or C.off }):Play()
+            TweenService:Create(knob, ti, { Position = state and UDim2.fromOffset(20, 2) or UDim2.fromOffset(2, 2) }):Play()
+        end
+        function obj:Set(v, silent)
+            state = v and true or false
+            render()
+            if not silent and callback then safe(callback, state) end
+        end
+        function obj:Get() return state end
+        track(row.Activated:Connect(function() obj:Set(not state) end))
+        return obj
+    end
+
+    track(btn.Activated:Connect(function() setActive(tab) end))
+    UI.Tabs[name] = tab
+    if not activeTab then setActive(tab) end
+    return tab
 end
 
--- mirror the hub's own gate so it can't kick you after we pass
-local gateOk = pcall(function()
-    local res = require(pk)
-    assert(type(res) == "table" and (rawget(res, "bytenet_use") or res.bytenet_use))
+function UI.Unload()
+    cleanupAll()
+    genv.ZPOST_GUI = nil
+end
+
+-- tab
+local tMain = UI:AddTab("Main")
+local statusLabel = tMain:AddLabel("Status hub: menunggu...")
+statusLabel.Size = UDim2.new(1, 0, 0, 36)
+local tVisual = UI:AddTab("Visual")
+tVisual:AddLabel("Belum ada fitur.")
+local tSet = UI:AddTab("Settings")
+tSet:AddLabel("Executor: " .. EXEC .. "  |  " .. (IS_MOBILE and "Mobile" or "PC"))
+tSet:AddButton("Unload GUI", function() UI.Unload() end)
+
+-- tombol K (bisa digeser, tap = buka/tutup)
+local fab = new("TextButton", {
+    Size = UDim2.fromOffset(48, 48), Position = UDim2.new(0, 12, 0.5, -24),
+    BackgroundColor3 = Color3.new(1, 1, 1), Text = "", AutoButtonColor = false,
+}, gui)
+corner(fab, 14)
+new("UIGradient", {
+    Color = ColorSequence.new(Color3.fromRGB(130, 90, 255), Color3.fromRGB(70, 150, 255)),
+    Rotation = 45,
+}, fab)
+local fabStroke = new("UIStroke", {
+    Color = Color3.fromRGB(190, 175, 255), Thickness = 2, Transparency = 0.1,
+}, fab)
+new("TextLabel", {
+    Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "K",
+    Font = Enum.Font.GothamBlack, TextSize = 26, TextColor3 = Color3.new(1, 1, 1),
+}, fab)
+local pulse = TweenService:Create(fabStroke,
+    TweenInfo.new(1.4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+    { Transparency = 0.75 })
+pulse:Play()
+cleanup[#cleanup + 1] = function() pulse:Cancel() end
+local scale = new("UIScale", { Scale = 1 }, fab)
+local function pressFx()
+    scale.Scale = 0.86
+    TweenService:Create(scale, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+        { Scale = 1 }):Play()
+end
+makeDraggable(fab, fab, function()
+    pressFx()
+    main.Visible = not main.Visible
 end)
-if not gateOk then
-    return warn("[zpost] require() failed or returned no bytenet_use, use a higher-UNC executor")
-end
 
-if genv.AzlScriptLoaded or _G.AzlScriptLoaded then
-    return warn("[zpost] already executed, rejoin to reload")
-end
+track(UIS.InputBegan:Connect(function(input, gp)
+    if not gp and input.KeyCode == Enum.KeyCode.RightShift then main.Visible = not main.Visible end
+end))
+
+genv.ZPOST_GUI = UI
+
+-- ===== loader hub Azure Latch =====
+local hubLoaded, loading = false, false
+local function setStatus(t) pcall(function() statusLabel.Text = "Status hub: " .. t end) end
 
 local function fetch(url)
     local ok, body = pcall(function() return game:HttpGet(url, true) end)
     if ok and type(body) == "string" and #body > 0 then return body end
     if req then
         local ok2, res = pcall(req, { Url = url, Method = "GET" })
-        if ok2 and res and type(res.Body) == "string" and #res.Body > 0 then
-            return res.Body
-        end
+        if ok2 and res and type(res.Body) == "string" and #res.Body > 0 then return res.Body end
     end
 end
 
-local src
-local tries = IS_MOBILE and 4 or 3
-for i = 1, tries do
-    src = fetch(URL)
-    if src then break end
-    warn(("[zpost] fetch failed %d/%d"):format(i, tries))
-    task.wait(1 + math.random() * 0.5)
+local function loadHub()
+    if hubLoaded or loading then return end
+    loading = true
+    local function fail(msg)
+        loading = false
+        setStatus("gagal, " .. msg)
+        warn("[zpost] " .. msg)
+    end
+
+    if type(loadstring) ~= "function" then return fail("executor tidak punya loadstring") end
+
+    setStatus("menunggu game...")
+    if not game:IsLoaded() then game.Loaded:Wait() end
+
+    local pk = RS:FindFirstChild("packets") or RS:WaitForChild("packets", IS_MOBILE and 20 or 8)
+    if not pk then return fail("'packets' tidak ketemu (bukan game yang benar / belum selesai loading)") end
+
+    local gateOk = pcall(function()
+        local res = require(pk)
+        assert(type(res) == "table" and (rawget(res, "bytenet_use") or res.bytenet_use))
+    end)
+    if not gateOk then return fail("require() gagal / tidak ada bytenet_use, pakai executor UNC lebih tinggi") end
+
+    if genv.AzlScriptLoaded or _G.AzlScriptLoaded then
+        hubLoaded, loading = true, false
+        return setStatus("sudah aktif (rejoin kalau mau muat ulang)")
+    end
+
+    setStatus("mengunduh script...")
+    local src
+    local tries = IS_MOBILE and 4 or 3
+    for i = 1, tries do
+        src = fetch(HUB_URL)
+        if src then break end
+        warn(("[zpost] fetch gagal %d/%d"):format(i, tries))
+        task.wait(1 + math.random() * 0.5)
+    end
+    if not src then return fail("download gagal, cek koneksi / HTTP executor") end
+
+    local fn, err = loadstring(src)
+    if not fn then return fail("compile error: " .. tostring(err)) end
+
+    setStatus("menjalankan hub...")
+    local ok = safe(fn)
+    if not ok then
+        genv.AzlScriptLoaded = nil
+        _G.AzlScriptLoaded = nil
+        return fail("hub error, lihat console")
+    end
+    hubLoaded, loading = true, false
+    setStatus("aktif")
 end
-if not src then return warn("[zpost] download failed, check connection/executor HTTP") end
 
-local fn, err = loadstring(src)
-if not fn then return warn("[zpost] compile error: " .. tostring(err)) end
+tMain:AddButton("Muat Hub / Coba Lagi", function() task.spawn(loadHub) end)
+tMain:AddLabel("Hub punya GUI sendiri. Tombol K hanya untuk GUI ini.")
+task.spawn(loadHub)
 
-cleanup[#cleanup + 1] = function() genv.AzlScriptLoaded = nil; _G.AzlScriptLoaded = nil end
-if not safe(fn) then cleanupAll() end
+warn("[zpost] GUI siap")
+]==])()
